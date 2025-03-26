@@ -1,0 +1,142 @@
+---
+id: 'auth-third-party-clerk'
+title: 'Clerk'
+subtitle: 'Use Clerk with your Supabase project'
+---
+
+Clerk can be used as a third-party authentication provider alongside Supabase Auth, or standalone, with your Supabase project.
+
+## Getting started
+
+Getting started is incredibly easy. Start off by visiting [Clerk's Connect with Supabase page](https://dashboard.clerk.com/setup/supabase) to configure your Clerk instance for Supabase compatibility.
+
+Finally add a [new Third-Party Auth integration with Clerk](/dashboard/project/_/auth/third-party) in the Supabase dashboard.
+
+### Setting up the Supabase CLI
+
+In the CLI add the following config to your `supabase/config.toml` file:
+
+```toml
+[auth.third_party.clerk]
+enabled = true
+domain = "example.clerk.accounts.dev"
+```
+
+### Manually configuring your Clerk instance
+
+If you are not able to use [Clerk's Connect with Supabase page](https://dashboard.clerk.com/setup/supabase) to easily configure your Clerk instance for working with Supabase, follow these steps.
+
+All Clerk [session tokens](https://clerk.com/docs/backend-requests/resources/session-tokens) you send to Supabase must contain a `role` claim. End-users who are authenticated should have the `authenticated` value. In some cases you may wish to change the role to match your advanced Postgres setup.
+
+Follow Clerk's guide on [customizing the session token](https://clerk.com/docs/backend-requests/custom-session-token) to add or modify the `role` claim based on your project's needs.
+
+Once all Clerk session tokens for your instance contain the `role` claim, add a [new Third-Party Auth integration with Clerk](/dashboard/project/_/auth/third-party) in the Supabase dashboard or register it in the CLI as instructed above.
+
+## Setup the Supabase client library
+
+<Tabs type="underlined" queryGroup="clerk-create-client">
+
+<TabPanel id="ts" label="TypeScript">
+
+```typescript
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient('https://<supabase-project>.supabase.co', 'SUPABASE_ANON_KEY', {
+  accessToken: () => {
+    return Clerk.session?.getToken()
+  },
+})
+```
+
+</TabPanel>
+
+<TabPanel id="dart" label="Flutter">
+
+```dart
+import 'package:clerk_flutter/clerk_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+...
+
+await Supabase.initialize(
+  url: 'SUPABASE_URL',
+  anonKey: 'SUPABASE_ANON_KEY',
+  accessToken: () async {
+    final token = await ClerkAuth.of(context).sessionToken();
+    return token.jwt;
+  },
+);
+```
+
+</TabPanel>
+
+<TabPanel id="swift" label="Swift (iOS)">
+
+```swift
+import Clerk
+import Supabase
+
+let supabase = SupabaseClient(
+  supabaseURL: URL(string: "https://project-ref.supabase.io")!,
+  supabaseKey: "supabase.anon.key",
+  options: SupabaseClientOptions(
+    auth: SupabaseClientOptions.AuthOptions(
+      accessToken: {
+        try await Clerk.shared.session?.getToken()?.jwt
+      }
+    )
+  )
+)
+```
+
+</TabPanel>
+
+</Tabs>
+
+## Using RLS policies
+
+Once you've configured the Supabase client library to use Clerk session tokens, you can use RLS policies to secure access to your project's database, Storage objects and Realtime channels.
+
+The recommended way to design RLS policies with Clerk is to use claims present in your Clerk session token to allow or reject access to your project's data. Check [Clerk's docs](https://clerk.com/docs/backend-requests/resources/session-tokens) on the available JWT claims and their values.
+
+### Example: Check user organization role
+
+```sql
+create policy "Only organization admins can insert in table"
+  on table_name
+  to authenticated
+  with check (
+    (auth.jwt()->>'org_role' = 'org:admin')
+      and
+    (organization_id = auth.jwt()->>'org_id')
+  );
+```
+
+This RLS policy checks that the newly inserted row in the table has the user's declared organization ID (from the `org_id` session token claim) in the `organization_id` column. Additionally it ensures that they're an `org:admin`.
+
+This way only organization admins can add rows to the table, for organizations they're a member of.
+
+### Example: Check user has passed second factor verification
+
+```sql
+create policy "Only users that have passed second factor verification can read from table"
+  on table_name
+  as restrictive
+  to authenticated
+  using (
+    (auth.jwt()->'fva'->>1 != '-1')
+  );
+```
+
+This example uses a restrictive RLS policy checks that the second factor verification age element in the `fva` claim is not `'-1'` indicating the user has passed through second factor verification.
+
+## Deprecated integration with JWT templates
+
+As of 1st April 2025 the previously available [Clerk Integration with Supabase](https://supabase.com/partners/integrations/clerk) is considered deprecated and is no longer recommended for use. Additionally all projects using this integration will not be charged for Third-Party Monthly Active Users (TP-MAU) until at least 1st January 2026.
+
+As this integration used low-level primitives in Supabase and Clerk such as a [configurable JWT secret](/dashboard/project/_/settings/api) and [JWT templates from Clerk](https://clerk.com/docs/backend-requests/jwt-templates) you are free to continue using it in an unofficial manner. Some limited support will remain to be offered.
+
+Here's the main reasons why this integration is being deprecated:
+
+- Sharing your project's JWT secret with a third-party is a problematic security practice
+- Rotating the project's JWT secret in this case almost always results in significant downtime for your application
+- Additional latency to [generate a new JWT](https://clerk.com/docs/backend-requests/jwt-templates#generate-a-jwt) for use with Supabase, instead of using the Clerk [session tokens](https://clerk.com/docs/backend-requests/resources/session-tokens)
